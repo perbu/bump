@@ -8,22 +8,17 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"golang.org/x/mod/semver"
 	"io"
-	"log"
-	"log/slog"
 	"os"
 	"os/signal"
 	"regexp"
 	"strings"
 	"syscall"
-	// go-git:
-	_ "github.com/go-git/go-git/v5"
-	_ "golang.org/x/mod/semver"
 )
 
 type action int
 
 const (
-	none action = iota
+	noAction action = iota
 	incrementPatch
 	incrementMinor
 	incrementMajor
@@ -31,9 +26,12 @@ const (
 
 type config struct {
 	version string
-
-	action action
+	action  action
 }
+
+const (
+	versionFilePath = ".version"
+)
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -53,27 +51,29 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if showHelp {
 		return nil
 	}
-	versionFilePath := "./.version"
 
-	// Check if the version file exists
-	_, err = os.Stat(versionFilePath)
-	if os.IsNotExist(err) && runConfig.version == "" {
-		return fmt.Errorf("version file does not exist")
+	repo, err := git.PlainOpen(".")
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
 	}
-
 	if runConfig.version != "" {
-		err := createVersionFile(versionFilePath, runConfig.version)
+		err = createVersionFile(versionFilePath, runConfig.version)
 		if err != nil {
 			return fmt.Errorf("createVersionFile: %w", err)
 		}
-		slog.Info("Created version file", "version", runConfig.version, "path", versionFilePath)
+		tag, err := tagVersion(repo, runConfig.version)
+		if err != nil {
+			return fmt.Errorf("tagVersion: %w", err)
+		}
+		_, _ = fmt.Fprintf(output, "Wrote version file '%s' version=%s, tag=%s\n", versionFilePath, runConfig.version, tag.Hash().String())
 		return nil
 	}
-
-	currentVersion, err := readVersionFromFile(versionFilePath)
+	// increment version
+	currentVersion, err := lastTag(repo)
 	if err != nil {
-		return fmt.Errorf("readVersionFromFile: %w", err)
+		return fmt.Errorf("failed to get last tag: %w", err)
 	}
+
 	newVersion, err := incrementVersion(currentVersion, runConfig.action)
 	if err != nil {
 		return fmt.Errorf("incrementVersion: %w", err)
@@ -82,23 +82,17 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("createVersionFile: %w", err)
 	}
-	err = tagVersion(newVersion)
+	tag, err := tagVersion(repo, newVersion)
 	if err != nil {
 		return fmt.Errorf("tagVersion: %w", err)
 	}
-	slog.Info("Incremented version", "old", currentVersion, "new", newVersion)
+	_, _ = fmt.Fprintf(output, "Wrote version file '%s' version=%s, tag=%s\n", versionFilePath, newVersion, tag.Hash().String())
 	return nil
 }
 
 var semVerRegexp = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 func lastTag(repo *git.Repository) (string, error) {
-	// Open the current Git repository
-	repo, err := git.PlainOpen(".")
-	if err != nil {
-		return "", fmt.Errorf("failed to open repository: %w", err)
-	}
-
 	// Get the list of tags
 	tagRefs, err := repo.Tags()
 	if err != nil {
@@ -141,6 +135,10 @@ func getConfig(args []string) (config, bool, error) {
 		flagSet.Usage()
 		return config{}, true, nil
 	}
+	// check if there are any arguments left
+	if flagSet.NArg() > 0 {
+		return config{}, false, fmt.Errorf("unexpected arguments: %s", flagSet.Args())
+	}
 
 	// if both version and increment flags are set, return an error
 	if cfg.version != "" && (patchFlag || minorFlag || majorFlag) {
@@ -159,6 +157,10 @@ func getConfig(args []string) (config, bool, error) {
 	if majorFlag {
 		cfg.action = incrementMajor
 	}
+	// no action not version given: increment patch
+	if cfg.action == noAction && cfg.version == "" {
+		cfg.action = incrementPatch
+	}
 	return cfg, false, nil
 }
 
@@ -170,26 +172,17 @@ func createVersionFile(filePath, version string) error {
 	return nil
 }
 
-func readVersionFromFile(filePath string) (string, error) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read version file: %w", err)
-	}
-	return string(content), nil
-}
-
 func incrementVersion(currentVersion string, action action) (string, error) {
 	parts := strings.Split(currentVersion, ".")
 	if len(parts) != 3 {
-		log.Fatalf("Invalid version format: %s", currentVersion)
+		return "", fmt.Errorf("invalid version format: %s", currentVersion)
 	}
 
 	var major, minor, patch int
-	_, err := fmt.Sscanf(currentVersion, "%d.%d.%d", &major, &minor, &patch)
+	_, err := fmt.Sscanf(currentVersion, "v%d.%d.%d", &major, &minor, &patch)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse current version('%s'): %w", currentVersion, err)
 	}
-
 	switch action {
 	case incrementPatch:
 		patch++
@@ -201,11 +194,19 @@ func incrementVersion(currentVersion string, action action) (string, error) {
 		minor = 0
 		patch = 0
 	default:
-		panic("invalid action")
+		return "", fmt.Errorf("invalid action: %d", action)
 	}
-	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
+	return fmt.Sprintf("v%d.%d.%d", major, minor, patch), nil
 }
 
-func tagVersion(version string) error {
-	return nil
+func tagVersion(repo *git.Repository, version string) (*plumbing.Reference, error) {
+	// find the current commit
+	head, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+	opts := &git.CreateTagOptions{
+		Message: "tag created by bump",
+	}
+	return repo.CreateTag(version, head.Hash(), opts)
 }
