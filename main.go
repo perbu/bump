@@ -56,6 +56,19 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("failed to open repository: %w", err)
 	}
+	// check that the repository is clean
+	w, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("repo.Worktree: %w", err)
+	}
+	status, err := w.Status()
+	if err != nil {
+		return fmt.Errorf("worktree.Status: %w", err)
+	}
+	if !status.IsClean() {
+		return fmt.Errorf("repository is not clean")
+	}
+
 	if runConfig.version != "" {
 		err = updateVersionFiles(repo, runConfig.version, output)
 		if err != nil {
@@ -65,7 +78,7 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		if err != nil {
 			return fmt.Errorf("tagVersion: %w", err)
 		}
-		_, _ = fmt.Fprintf(output, "Bumped version to %s, tag=%s\n", runConfig.version, tag.Hash().String())
+		_, _ = fmt.Fprintf(output, "Set version %s, tag=%s\n", runConfig.version, tag.Hash().String())
 		return nil
 	}
 	// increment version
@@ -86,7 +99,8 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("tagVersion: %w", err)
 	}
-	_, _ = fmt.Fprintf(output, "Bumped version to %s, tag=%s\n", newVersion, tag.Hash().String())
+	_, _ = fmt.Fprintf(output, "Bumped version %s --> %s, tag=%s\n", currentVersion,
+		newVersion, tag.Hash().String())
 	return nil
 }
 

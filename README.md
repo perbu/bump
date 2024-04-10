@@ -2,6 +2,11 @@
 
 A simple tool to bump version numbers in git. Written as replacement for standard-version, which is deprecated.
 
+## Installation
+
+```sh
+go install github.com/celerway/bump@latest
+```
 
 ## What it does
 
