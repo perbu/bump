@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"flag"
 	"fmt"
 	"github.com/go-git/go-git/v5"
@@ -10,10 +11,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"regexp"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
+
+//go:embed .version
+var version string
 
 type action int
 
@@ -28,10 +32,6 @@ type config struct {
 	version string
 	action  action
 }
-
-const (
-	versionFilePath = ".version"
-)
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -57,15 +57,15 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		return fmt.Errorf("failed to open repository: %w", err)
 	}
 	if runConfig.version != "" {
-		err = createVersionFile(versionFilePath, runConfig.version)
+		err = updateVersionFiles(repo, runConfig.version, output)
 		if err != nil {
-			return fmt.Errorf("createVersionFile: %w", err)
+			return fmt.Errorf("updateVersionFiles: %w", err)
 		}
 		tag, err := tagVersion(repo, runConfig.version)
 		if err != nil {
 			return fmt.Errorf("tagVersion: %w", err)
 		}
-		_, _ = fmt.Fprintf(output, "Wrote version file '%s' version=%s, tag=%s\n", versionFilePath, runConfig.version, tag.Hash().String())
+		_, _ = fmt.Fprintf(output, "Bumped version to %s, tag=%s\n", runConfig.version, tag.Hash().String())
 		return nil
 	}
 	// increment version
@@ -78,19 +78,17 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("incrementVersion: %w", err)
 	}
-	err = createVersionFile(versionFilePath, newVersion)
+	err = updateVersionFiles(repo, newVersion, output)
 	if err != nil {
-		return fmt.Errorf("createVersionFile: %w", err)
+		return fmt.Errorf("updateVersionFiles: %w", err)
 	}
 	tag, err := tagVersion(repo, newVersion)
 	if err != nil {
 		return fmt.Errorf("tagVersion: %w", err)
 	}
-	_, _ = fmt.Fprintf(output, "Wrote version file '%s' version=%s, tag=%s\n", versionFilePath, newVersion, tag.Hash().String())
+	_, _ = fmt.Fprintf(output, "Bumped version to %s, tag=%s\n", newVersion, tag.Hash().String())
 	return nil
 }
-
-var semVerRegexp = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 func lastTag(repo *git.Repository) (string, error) {
 	// Get the list of tags
@@ -101,7 +99,7 @@ func lastTag(repo *git.Repository) (string, error) {
 	var tags []string
 	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
 		// check that the tag matches the semver format
-		if !semVerRegexp.MatchString(t.Name().Short()) {
+		if !semver.IsValid(t.Name().Short()) {
 			return nil
 		}
 		tags = append(tags, t.Name().Short())
@@ -164,10 +162,49 @@ func getConfig(args []string) (config, bool, error) {
 	return cfg, false, nil
 }
 
-func createVersionFile(filePath, version string) error {
-	err := os.WriteFile(filePath, []byte(version), 0644)
+func updateVersionFiles(repo *git.Repository, version string, output io.Writer) error {
+	// find all the files name ".version"
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("failed to walk directory: %w", err)
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if d.Name() != ".version" {
+			return nil
+		}
+		// read the content of the file
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read file: %w", err)
+		}
+		// content must either by empty or a valid semver, if not we return an error
+
+		if len(content) > 0 && !semver.IsValid(string(content)) {
+			return fmt.Errorf("invalid version in file %s: %s", path, content)
+		}
+		// write the new version to the file
+		err = os.WriteFile(path, []byte(version), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write file: %w", err)
+		}
+		// add the file to the repository
+		err = add(repo, path)
+		if err != nil {
+			return fmt.Errorf("failed to add file: %w", err)
+		}
+		// print the action to the output.
+		_, _ = fmt.Fprintf(output, "Updated version in file %s to %s\n", path, version)
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to create version file: %w", err)
+		return fmt.Errorf("failed to walk directory: %w", err)
+	}
+	// commit the changes
+	err = commit(repo, fmt.Sprintf("bump version to %s", version))
+	if err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }
@@ -209,4 +246,29 @@ func tagVersion(repo *git.Repository, version string) (*plumbing.Reference, erro
 		Message: "tag created by bump",
 	}
 	return repo.CreateTag(version, head.Hash(), opts)
+}
+
+// add adds the file at the given path to the repository
+func add(repo *git.Repository, path string) error {
+	w, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("repo.Worktree: %w", err)
+	}
+	_, err = w.Add(path)
+	if err != nil {
+		return fmt.Errorf("worktree.Add(%s): %w", path, err)
+	}
+	return nil
+}
+
+func commit(repo *git.Repository, message string) error {
+	w, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("repo.Worktree: %w", err)
+	}
+	_, err = w.Commit(message, &git.CommitOptions{})
+	if err != nil {
+		return fmt.Errorf("worktree.Commit: %w", err)
+	}
+	return nil
 }
