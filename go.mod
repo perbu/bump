@@ -1,4 +1,4 @@
-module github.com/perbu/bump
+module github.com/celerway/bump
 
 go 1.22.2
 
