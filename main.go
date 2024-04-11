@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/go-git/go-git/v5"
@@ -46,7 +47,7 @@ func main() {
 }
 
 func run(ctx context.Context, output io.Writer, argv []string, env []string) error {
-	_, _ = fmt.Fprintf(output, "bump '%s'\n", embeddedVersion)
+	_, _ = fmt.Fprintf(output, "bump %s bumping\n", embeddedVersion)
 	runConfig, showHelp, err := getConfig(argv)
 	if err != nil {
 		return fmt.Errorf("getConfig: %w", err)
@@ -73,6 +74,9 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	}
 
 	if runConfig.version != "" {
+		if !semver.IsValid(runConfig.version) {
+			return fmt.Errorf("invalid semantic version string: '%s'", runConfig.version)
+		}
 
 		err = updateVersionFiles(repo, runConfig, output, runConfig.version)
 		if err != nil {
@@ -125,6 +129,9 @@ func lastTag(repo *git.Repository) (string, error) {
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to iterate over tags: %w", err)
+	}
+	if len(tags) == 0 {
+		return "", errors.New("no version tags found in the repository")
 	}
 	// sort the tags
 	semver.Sort(tags)
