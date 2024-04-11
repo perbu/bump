@@ -74,11 +74,11 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 
 	if runConfig.version != "" {
 
-		err = updateVersionFiles(repo, runConfig, output)
+		err = updateVersionFiles(repo, runConfig, output, runConfig.version)
 		if err != nil {
 			return fmt.Errorf("updateVersionFiles: %w", err)
 		}
-		hash, err := tagVersion(repo, runConfig)
+		hash, err := tagVersion(repo, runConfig, runConfig.version)
 		if err != nil {
 			return fmt.Errorf("tagVersion: %w", err)
 		}
@@ -95,11 +95,11 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("incrementVersion: %w", err)
 	}
-	err = updateVersionFiles(repo, runConfig, output)
+	err = updateVersionFiles(repo, runConfig, output, newVersion)
 	if err != nil {
 		return fmt.Errorf("updateVersionFiles: %w", err)
 	}
-	tag, err := tagVersion(repo, runConfig)
+	tag, err := tagVersion(repo, runConfig, newVersion)
 	if err != nil {
 		return fmt.Errorf("tagVersion: %w", err)
 	}
@@ -182,7 +182,7 @@ func getConfig(args []string) (config, bool, error) {
 	return cfg, false, nil
 }
 
-func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) error {
+func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newVersion string) error {
 	// find all the files name ".version"
 	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -205,13 +205,13 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 			return fmt.Errorf("invalid version in file %s: %s", path, content)
 		}
 		// print the action to the output.
-		_, _ = fmt.Fprintf(output, "Updating version in file %s to %s\n", path, cfg.version)
+		_, _ = fmt.Fprintf(output, "Updating version in file %s to %s\n", path, newVersion)
 
 		if cfg.dryRun {
 			return nil // return early if we are in dry-run mode
 		}
 		// write the new version to the file
-		err = os.WriteFile(path, []byte(cfg.version), 0644)
+		err = os.WriteFile(path, []byte(newVersion), 0644)
 		if err != nil {
 			return fmt.Errorf("failed to write file: %w", err)
 		}
@@ -226,7 +226,7 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 		return fmt.Errorf("failed to walk directory: %w", err)
 	}
 	// commit the changes
-	err = commit(repo, fmt.Sprintf("bump version to %s", cfg.version))
+	err = commit(repo, fmt.Sprintf("bump version to %s", newVersion))
 	if err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
@@ -260,7 +260,7 @@ func incrementVersion(currentVersion string, cfg config) (string, error) {
 	return fmt.Sprintf("v%d.%d.%d", major, minor, patch), nil
 }
 
-func tagVersion(repo *git.Repository, cfg config) (string, error) {
+func tagVersion(repo *git.Repository, cfg config, version string) (string, error) {
 	// find the current commit
 	head, err := repo.Head()
 	if err != nil {
@@ -272,7 +272,7 @@ func tagVersion(repo *git.Repository, cfg config) (string, error) {
 	if cfg.dryRun {
 		return head.Hash().String(), nil
 	}
-	ref, err := repo.CreateTag(cfg.version, head.Hash(), opts)
+	ref, err := repo.CreateTag(version, head.Hash(), opts)
 	if err != nil {
 		return "", fmt.Errorf("failed to create tag: %w", err)
 	}
