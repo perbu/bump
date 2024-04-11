@@ -17,7 +17,7 @@ import (
 )
 
 //go:embed .version
-var version string
+var embeddedVersion string
 
 type action int
 
@@ -44,6 +44,7 @@ func main() {
 }
 
 func run(ctx context.Context, output io.Writer, argv []string, env []string) error {
+	_, _ = fmt.Fprintf(output, "bump '%s'\n", embeddedVersion)
 	runConfig, showHelp, err := getConfig(argv)
 	if err != nil {
 		return fmt.Errorf("getConfig: %w", err)
@@ -78,10 +79,10 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		if err != nil {
 			return fmt.Errorf("tagVersion: %w", err)
 		}
-		_, _ = fmt.Fprintf(output, "Set version %s, tag=%s\n", runConfig.version, tag.Hash().String())
+		_, _ = fmt.Fprintf(output, "Set embeddedVersion %s, tag=%s\n", runConfig.version, tag.Hash().String())
 		return nil
 	}
-	// increment version
+	// increment embeddedVersion
 	currentVersion, err := lastTag(repo)
 	if err != nil {
 		return fmt.Errorf("failed to get last tag: %w", err)
@@ -99,7 +100,7 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("tagVersion: %w", err)
 	}
-	_, _ = fmt.Fprintf(output, "Bumped version %s --> %s, tag=%s\n", currentVersion,
+	_, _ = fmt.Fprintf(output, "Bumped embeddedVersion %s --> %s, tag=%s\n", currentVersion,
 		newVersion, tag.Hash().String())
 	return nil
 }
@@ -132,11 +133,11 @@ func getConfig(args []string) (config, bool, error) {
 	var cfg config
 	var showhelp, patchFlag, minorFlag, majorFlag bool
 
-	flagSet := flag.NewFlagSet("version", flag.ContinueOnError)
-	flagSet.StringVar(&cfg.version, "version", "", "Initial version number.")
-	flagSet.BoolVar(&patchFlag, "patch", false, "Increase patch version.")
-	flagSet.BoolVar(&minorFlag, "minor", false, "Increase minor version.")
-	flagSet.BoolVar(&majorFlag, "major", false, "Increase major version.")
+	flagSet := flag.NewFlagSet("embeddedVersion", flag.ContinueOnError)
+	flagSet.StringVar(&cfg.version, "embeddedVersion", "", "Initial embeddedVersion number.")
+	flagSet.BoolVar(&patchFlag, "patch", false, "Increase patch embeddedVersion.")
+	flagSet.BoolVar(&minorFlag, "minor", false, "Increase minor embeddedVersion.")
+	flagSet.BoolVar(&majorFlag, "major", false, "Increase major embeddedVersion.")
 	flagSet.BoolVar(&showhelp, "help", false, "Show help message.")
 
 	err := flagSet.Parse(args)
@@ -152,9 +153,9 @@ func getConfig(args []string) (config, bool, error) {
 		return config{}, false, fmt.Errorf("unexpected arguments: %s", flagSet.Args())
 	}
 
-	// if both version and increment flags are set, return an error
+	// if both embeddedVersion and increment flags are set, return an error
 	if cfg.version != "" && (patchFlag || minorFlag || majorFlag) {
-		return config{}, false, fmt.Errorf("cannot set version and increment flags at the same time")
+		return config{}, false, fmt.Errorf("cannot set embeddedVersion and increment flags at the same time")
 	}
 	// check that not more than one flag is set:
 	if (patchFlag && minorFlag) || (patchFlag && majorFlag) || (minorFlag && majorFlag) {
@@ -169,7 +170,7 @@ func getConfig(args []string) (config, bool, error) {
 	if majorFlag {
 		cfg.action = incrementMajor
 	}
-	// no action not version given: increment patch
+	// no action not embeddedVersion given: increment patch
 	if cfg.action == noAction && cfg.version == "" {
 		cfg.action = incrementPatch
 	}
@@ -177,7 +178,7 @@ func getConfig(args []string) (config, bool, error) {
 }
 
 func updateVersionFiles(repo *git.Repository, version string, output io.Writer) error {
-	// find all the files name ".version"
+	// find all the files name ".embeddedVersion"
 	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("failed to walk directory: %w", err)
@@ -185,7 +186,7 @@ func updateVersionFiles(repo *git.Repository, version string, output io.Writer) 
 		if d.IsDir() {
 			return nil
 		}
-		if d.Name() != ".version" {
+		if d.Name() != ".embeddedVersion" {
 			return nil
 		}
 		// read the content of the file
@@ -196,9 +197,9 @@ func updateVersionFiles(repo *git.Repository, version string, output io.Writer) 
 		// content must either by empty or a valid semver, if not we return an error
 
 		if len(content) > 0 && !semver.IsValid(string(content)) {
-			return fmt.Errorf("invalid version in file %s: %s", path, content)
+			return fmt.Errorf("invalid embeddedVersion in file %s: %s", path, content)
 		}
-		// write the new version to the file
+		// write the new embeddedVersion to the file
 		err = os.WriteFile(path, []byte(version), 0644)
 		if err != nil {
 			return fmt.Errorf("failed to write file: %w", err)
@@ -209,14 +210,14 @@ func updateVersionFiles(repo *git.Repository, version string, output io.Writer) 
 			return fmt.Errorf("failed to add file: %w", err)
 		}
 		// print the action to the output.
-		_, _ = fmt.Fprintf(output, "Updated version in file %s to %s\n", path, version)
+		_, _ = fmt.Fprintf(output, "Updated embeddedVersion in file %s to %s\n", path, version)
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to walk directory: %w", err)
 	}
 	// commit the changes
-	err = commit(repo, fmt.Sprintf("bump version to %s", version))
+	err = commit(repo, fmt.Sprintf("bump embeddedVersion to %s", version))
 	if err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
@@ -226,13 +227,13 @@ func updateVersionFiles(repo *git.Repository, version string, output io.Writer) 
 func incrementVersion(currentVersion string, action action) (string, error) {
 	parts := strings.Split(currentVersion, ".")
 	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid version format: %s", currentVersion)
+		return "", fmt.Errorf("invalid embeddedVersion format: %s", currentVersion)
 	}
 
 	var major, minor, patch int
 	_, err := fmt.Sscanf(currentVersion, "v%d.%d.%d", &major, &minor, &patch)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse current version('%s'): %w", currentVersion, err)
+		return "", fmt.Errorf("failed to parse current embeddedVersion('%s'): %w", currentVersion, err)
 	}
 	switch action {
 	case incrementPatch:
