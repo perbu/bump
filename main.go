@@ -73,6 +73,7 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	}
 
 	if runConfig.version != "" {
+
 		err = updateVersionFiles(repo, runConfig, output)
 		if err != nil {
 			return fmt.Errorf("updateVersionFiles: %w", err)
@@ -81,10 +82,10 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		if err != nil {
 			return fmt.Errorf("tagVersion: %w", err)
 		}
-		_, _ = fmt.Fprintf(output, "Set embeddedVersion %s, tag=%s\n", runConfig.version, hash)
+		_, _ = fmt.Fprintf(output, "Set version %s, tag=%s\n", runConfig.version, hash)
 		return nil
 	}
-	// increment embeddedVersion
+	// increment version
 	currentVersion, err := lastTag(repo)
 	if err != nil {
 		return fmt.Errorf("failed to get last tag: %w", err)
@@ -102,7 +103,7 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("tagVersion: %w", err)
 	}
-	_, _ = fmt.Fprintf(output, "Bumped embeddedVersion %s --> %s, tag=%s\n", currentVersion,
+	_, _ = fmt.Fprintf(output, "Bumped version %s --> %s, tag=%s\n", currentVersion,
 		newVersion, tag)
 	return nil
 }
@@ -135,11 +136,11 @@ func getConfig(args []string) (config, bool, error) {
 	var cfg config
 	var showhelp, patchFlag, minorFlag, majorFlag bool
 
-	flagSet := flag.NewFlagSet("embeddedVersion", flag.ContinueOnError)
-	flagSet.StringVar(&cfg.version, "embeddedVersion", "", "Initial embeddedVersion number.")
-	flagSet.BoolVar(&patchFlag, "patch", false, "Increase patch embeddedVersion.")
-	flagSet.BoolVar(&minorFlag, "minor", false, "Increase minor embeddedVersion.")
-	flagSet.BoolVar(&majorFlag, "major", false, "Increase major embeddedVersion.")
+	flagSet := flag.NewFlagSet("version", flag.ContinueOnError)
+	flagSet.StringVar(&cfg.version, "version", "", "Initial version number.")
+	flagSet.BoolVar(&patchFlag, "patch", false, "Increase patch version.")
+	flagSet.BoolVar(&minorFlag, "minor", false, "Increase minor version.")
+	flagSet.BoolVar(&majorFlag, "major", false, "Increase major version.")
 	flagSet.BoolVar(&cfg.dryRun, "dry-run", false, "Do not write changes to the repository.")
 	flagSet.BoolVar(&cfg.forced, "force", false, "Force the action despite the repository being dirty.")
 	flagSet.BoolVar(&showhelp, "help", false, "Show help message.")
@@ -157,9 +158,9 @@ func getConfig(args []string) (config, bool, error) {
 		return config{}, false, fmt.Errorf("unexpected arguments: %s", flagSet.Args())
 	}
 
-	// if both embeddedVersion and increment flags are set, return an error
+	// if both version and increment flags are set, return an error
 	if cfg.version != "" && (patchFlag || minorFlag || majorFlag) {
-		return config{}, false, fmt.Errorf("cannot set embeddedVersion and increment flags at the same time")
+		return config{}, false, fmt.Errorf("cannot set version and increment flags at the same time")
 	}
 	// check that not more than one flag is set:
 	if (patchFlag && minorFlag) || (patchFlag && majorFlag) || (minorFlag && majorFlag) {
@@ -174,7 +175,7 @@ func getConfig(args []string) (config, bool, error) {
 	if majorFlag {
 		cfg.action = incrementMajor
 	}
-	// no action not embeddedVersion given: increment patch
+	// no action not version given: increment patch
 	if cfg.action == noAction && cfg.version == "" {
 		cfg.action = incrementPatch
 	}
@@ -182,7 +183,7 @@ func getConfig(args []string) (config, bool, error) {
 }
 
 func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) error {
-	// find all the files name ".embeddedVersion"
+	// find all the files name ".version"
 	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("failed to walk directory: %w", err)
@@ -190,7 +191,7 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 		if d.IsDir() {
 			return nil
 		}
-		if d.Name() != ".embeddedVersion" {
+		if d.Name() != ".version" {
 			return nil
 		}
 		// read the content of the file
@@ -201,15 +202,15 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 		// content must either by empty or a valid semver, if not we return an error
 
 		if len(content) > 0 && !semver.IsValid(string(content)) {
-			return fmt.Errorf("invalid embeddedVersion in file %s: %s", path, content)
+			return fmt.Errorf("invalid version in file %s: %s", path, content)
 		}
 		// print the action to the output.
-		_, _ = fmt.Fprintf(output, "Updating embeddedVersion in file %s to %s\n", path, cfg.version)
+		_, _ = fmt.Fprintf(output, "Updating version in file %s to %s\n", path, cfg.version)
 
 		if cfg.dryRun {
 			return nil // return early if we are in dry-run mode
 		}
-		// write the new embeddedVersion to the file
+		// write the new version to the file
 		err = os.WriteFile(path, []byte(cfg.version), 0644)
 		if err != nil {
 			return fmt.Errorf("failed to write file: %w", err)
@@ -225,7 +226,7 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 		return fmt.Errorf("failed to walk directory: %w", err)
 	}
 	// commit the changes
-	err = commit(repo, fmt.Sprintf("bump embeddedVersion to %s", cfg.version))
+	err = commit(repo, fmt.Sprintf("bump version to %s", cfg.version))
 	if err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
@@ -235,13 +236,13 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 func incrementVersion(currentVersion string, cfg config) (string, error) {
 	parts := strings.Split(currentVersion, ".")
 	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid embeddedVersion format: %s", currentVersion)
+		return "", fmt.Errorf("invalid version format: %s", currentVersion)
 	}
 
 	var major, minor, patch int
 	_, err := fmt.Sscanf(currentVersion, "v%d.%d.%d", &major, &minor, &patch)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse current embeddedVersion('%s'): %w", currentVersion, err)
+		return "", fmt.Errorf("failed to parse current version('%s'): %w", currentVersion, err)
 	}
 	switch cfg.action {
 	case incrementPatch:
