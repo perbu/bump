@@ -71,11 +71,11 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	}
 
 	if runConfig.version != "" {
-		err = updateVersionFiles(repo, runConfig.version, output)
+		err = updateVersionFiles(repo, runConfig, output)
 		if err != nil {
 			return fmt.Errorf("updateVersionFiles: %w", err)
 		}
-		tag, err := tagVersion(repo, runConfig.version)
+		tag, err := tagVersion(repo, runConfig)
 		if err != nil {
 			return fmt.Errorf("tagVersion: %w", err)
 		}
@@ -88,15 +88,15 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		return fmt.Errorf("failed to get last tag: %w", err)
 	}
 
-	newVersion, err := incrementVersion(currentVersion, runConfig.action)
+	newVersion, err := incrementVersion(currentVersion, runConfig)
 	if err != nil {
 		return fmt.Errorf("incrementVersion: %w", err)
 	}
-	err = updateVersionFiles(repo, newVersion, output)
+	err = updateVersionFiles(repo, runConfig, output)
 	if err != nil {
 		return fmt.Errorf("updateVersionFiles: %w", err)
 	}
-	tag, err := tagVersion(repo, newVersion)
+	tag, err := tagVersion(repo, runConfig)
 	if err != nil {
 		return fmt.Errorf("tagVersion: %w", err)
 	}
@@ -177,7 +177,7 @@ func getConfig(args []string) (config, bool, error) {
 	return cfg, false, nil
 }
 
-func updateVersionFiles(repo *git.Repository, version string, output io.Writer) error {
+func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) error {
 	// find all the files name ".embeddedVersion"
 	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -200,7 +200,7 @@ func updateVersionFiles(repo *git.Repository, version string, output io.Writer) 
 			return fmt.Errorf("invalid embeddedVersion in file %s: %s", path, content)
 		}
 		// write the new embeddedVersion to the file
-		err = os.WriteFile(path, []byte(version), 0644)
+		err = os.WriteFile(path, []byte(cfg.version), 0644)
 		if err != nil {
 			return fmt.Errorf("failed to write file: %w", err)
 		}
@@ -210,21 +210,21 @@ func updateVersionFiles(repo *git.Repository, version string, output io.Writer) 
 			return fmt.Errorf("failed to add file: %w", err)
 		}
 		// print the action to the output.
-		_, _ = fmt.Fprintf(output, "Updated embeddedVersion in file %s to %s\n", path, version)
+		_, _ = fmt.Fprintf(output, "Updated embeddedVersion in file %s to %s\n", path, cfg.version)
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to walk directory: %w", err)
 	}
 	// commit the changes
-	err = commit(repo, fmt.Sprintf("bump embeddedVersion to %s", version))
+	err = commit(repo, fmt.Sprintf("bump embeddedVersion to %s", cfg.version))
 	if err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }
 
-func incrementVersion(currentVersion string, action action) (string, error) {
+func incrementVersion(currentVersion string, cfg config) (string, error) {
 	parts := strings.Split(currentVersion, ".")
 	if len(parts) != 3 {
 		return "", fmt.Errorf("invalid embeddedVersion format: %s", currentVersion)
@@ -235,7 +235,7 @@ func incrementVersion(currentVersion string, action action) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to parse current embeddedVersion('%s'): %w", currentVersion, err)
 	}
-	switch action {
+	switch cfg.action {
 	case incrementPatch:
 		patch++
 	case incrementMinor:
@@ -246,12 +246,12 @@ func incrementVersion(currentVersion string, action action) (string, error) {
 		minor = 0
 		patch = 0
 	default:
-		return "", fmt.Errorf("invalid action: %d", action)
+		return "", fmt.Errorf("invalid action: %d", cfg.action)
 	}
 	return fmt.Sprintf("v%d.%d.%d", major, minor, patch), nil
 }
 
-func tagVersion(repo *git.Repository, version string) (*plumbing.Reference, error) {
+func tagVersion(repo *git.Repository, cfg config) (*plumbing.Reference, error) {
 	// find the current commit
 	head, err := repo.Head()
 	if err != nil {
@@ -260,7 +260,7 @@ func tagVersion(repo *git.Repository, version string) (*plumbing.Reference, erro
 	opts := &git.CreateTagOptions{
 		Message: "tag created by bump",
 	}
-	return repo.CreateTag(version, head.Hash(), opts)
+	return repo.CreateTag(cfg.version, head.Hash(), opts)
 }
 
 // add adds the file at the given path to the repository
