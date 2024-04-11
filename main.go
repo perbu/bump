@@ -31,6 +31,8 @@ const (
 type config struct {
 	version string
 	action  action
+	dryRun  bool
+	forced  bool
 }
 
 func main() {
@@ -66,7 +68,7 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("worktree.Status: %w", err)
 	}
-	if !status.IsClean() {
+	if !status.IsClean() && !runConfig.forced {
 		return fmt.Errorf("repository is not clean")
 	}
 
@@ -75,11 +77,11 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		if err != nil {
 			return fmt.Errorf("updateVersionFiles: %w", err)
 		}
-		tag, err := tagVersion(repo, runConfig)
+		hash, err := tagVersion(repo, runConfig)
 		if err != nil {
 			return fmt.Errorf("tagVersion: %w", err)
 		}
-		_, _ = fmt.Fprintf(output, "Set embeddedVersion %s, tag=%s\n", runConfig.version, tag.Hash().String())
+		_, _ = fmt.Fprintf(output, "Set embeddedVersion %s, tag=%s\n", runConfig.version, hash)
 		return nil
 	}
 	// increment embeddedVersion
@@ -101,7 +103,7 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		return fmt.Errorf("tagVersion: %w", err)
 	}
 	_, _ = fmt.Fprintf(output, "Bumped embeddedVersion %s --> %s, tag=%s\n", currentVersion,
-		newVersion, tag.Hash().String())
+		newVersion, tag)
 	return nil
 }
 
@@ -138,6 +140,8 @@ func getConfig(args []string) (config, bool, error) {
 	flagSet.BoolVar(&patchFlag, "patch", false, "Increase patch embeddedVersion.")
 	flagSet.BoolVar(&minorFlag, "minor", false, "Increase minor embeddedVersion.")
 	flagSet.BoolVar(&majorFlag, "major", false, "Increase major embeddedVersion.")
+	flagSet.BoolVar(&cfg.dryRun, "dry-run", false, "Do not write changes to the repository.")
+	flagSet.BoolVar(&cfg.forced, "force", false, "Force the action despite the repository being dirty.")
 	flagSet.BoolVar(&showhelp, "help", false, "Show help message.")
 
 	err := flagSet.Parse(args)
@@ -199,6 +203,12 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 		if len(content) > 0 && !semver.IsValid(string(content)) {
 			return fmt.Errorf("invalid embeddedVersion in file %s: %s", path, content)
 		}
+		// print the action to the output.
+		_, _ = fmt.Fprintf(output, "Updating embeddedVersion in file %s to %s\n", path, cfg.version)
+
+		if cfg.dryRun {
+			return nil // return early if we are in dry-run mode
+		}
 		// write the new embeddedVersion to the file
 		err = os.WriteFile(path, []byte(cfg.version), 0644)
 		if err != nil {
@@ -209,8 +219,6 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer) erro
 		if err != nil {
 			return fmt.Errorf("failed to add file: %w", err)
 		}
-		// print the action to the output.
-		_, _ = fmt.Fprintf(output, "Updated embeddedVersion in file %s to %s\n", path, cfg.version)
 		return nil
 	})
 	if err != nil {
@@ -251,16 +259,23 @@ func incrementVersion(currentVersion string, cfg config) (string, error) {
 	return fmt.Sprintf("v%d.%d.%d", major, minor, patch), nil
 }
 
-func tagVersion(repo *git.Repository, cfg config) (*plumbing.Reference, error) {
+func tagVersion(repo *git.Repository, cfg config) (string, error) {
 	// find the current commit
 	head, err := repo.Head()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+		return "", fmt.Errorf("failed to get HEAD: %w", err)
 	}
 	opts := &git.CreateTagOptions{
 		Message: "tag created by bump",
 	}
-	return repo.CreateTag(cfg.version, head.Hash(), opts)
+	if cfg.dryRun {
+		return head.Hash().String(), nil
+	}
+	ref, err := repo.CreateTag(cfg.version, head.Hash(), opts)
+	if err != nil {
+		return "", fmt.Errorf("failed to create tag: %w", err)
+	}
+	return ref.Hash().String(), nil
 }
 
 // add adds the file at the given path to the repository
