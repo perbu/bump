@@ -70,7 +70,7 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		return fmt.Errorf("worktree.Status: %w", err)
 	}
 	if !status.IsClean() && !runConfig.forced {
-		return fmt.Errorf("repository is not clean")
+		return fmt.Errorf("repository is not clean (use -force to override)")
 	}
 
 	if runConfig.version != "" {
@@ -209,7 +209,7 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 		// content must either by empty or a valid semver, if not we return an error
 
 		if len(content) > 0 && !semver.IsValid(string(content)) {
-			return fmt.Errorf("invalid version in file %s: %s", path, content)
+			return fmt.Errorf("invalid version in file %s: '%s'", path, content)
 		}
 		// print the action to the output.
 		_, _ = fmt.Fprintf(output, "Updating version in file %s to %s\n", path, newVersion)
