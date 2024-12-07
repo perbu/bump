@@ -5,7 +5,7 @@ A simple tool to bump version numbers in git. Written as replacement for standar
 ## Installation
 
 ```sh
-go install github.com/celerway/bump@latest
+go install github.com/perbu/bump@latest
 ```
 
 ## What it does
@@ -17,7 +17,7 @@ tags, it will fail.
 It will then increment ("bump") the version number according to the command line arguments. If no arguments are given
 it will default to bumping the patch version.
 
-It will then look for files name `.version`. If any such files are found in the reposity their content will be
+It will then look for files name `.version`. If any such files are found in the repository their content will be
 replaced with the new version number.
 
 These files will then be added to git and committed with a message that includes the new version number. bump will try
