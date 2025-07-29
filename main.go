@@ -78,6 +78,15 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 			return fmt.Errorf("invalid semantic version string: '%s'", runConfig.version)
 		}
 
+		// Check if tag already exists before making any changes
+		exists, err := tagExists(repo, runConfig.version)
+		if err != nil {
+			return fmt.Errorf("failed to check if tag exists: %w", err)
+		}
+		if exists {
+			return fmt.Errorf("tag '%s' already exists", runConfig.version)
+		}
+
 		err = updateVersionFiles(repo, runConfig, output, runConfig.version)
 		if err != nil {
 			return fmt.Errorf("updateVersionFiles: %w", err)
@@ -99,6 +108,16 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("incrementVersion: %w", err)
 	}
+
+	// Check if the target tag already exists before making any changes
+	exists, err := tagExists(repo, newVersion)
+	if err != nil {
+		return fmt.Errorf("failed to check if tag exists: %w", err)
+	}
+	if exists {
+		return fmt.Errorf("tag '%s' already exists", newVersion)
+	}
+
 	err = updateVersionFiles(repo, runConfig, output, newVersion)
 	if err != nil {
 		return fmt.Errorf("updateVersionFiles: %w", err)
@@ -137,6 +156,26 @@ func lastTag(repo *git.Repository) (string, error) {
 	semver.Sort(tags)
 	// return the last tag
 	return tags[len(tags)-1], nil
+}
+
+func tagExists(repo *git.Repository, tagName string) (bool, error) {
+	tagRefs, err := repo.Tags()
+	if err != nil {
+		return false, fmt.Errorf("failed to get tags: %w", err)
+	}
+
+	exists := false
+	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
+		if t.Name().Short() == tagName {
+			exists = true
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to iterate over tags: %w", err)
+	}
+
+	return exists, nil
 }
 
 func getConfig(args []string) (config, bool, error) {
