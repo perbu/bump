@@ -271,10 +271,14 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 	if err != nil {
 		return fmt.Errorf("failed to walk directory: %w", err)
 	}
-	// commit the changes
-	err = commit(repo, fmt.Sprintf("bump version to %s", newVersion))
-	if err != nil {
-		return fmt.Errorf("commit: %w", err)
+
+	// Only commit if not in dry-run mode
+	if !cfg.dryRun {
+		// commit the changes
+		err = commit(repo, fmt.Sprintf("bump version to %s", newVersion))
+		if err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
 	}
 	return nil
 }
