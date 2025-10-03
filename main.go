@@ -74,7 +74,9 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	}
 
 	if runConfig.version != "" {
-		if !semver.IsValid(runConfig.version) {
+		// Normalize version for validation (semver requires "v" prefix)
+		normalizedVersion := normalizeVersion(runConfig.version)
+		if !semver.IsValid(normalizedVersion) {
 			return fmt.Errorf("invalid semantic version string: '%s'", runConfig.version)
 		}
 
@@ -138,12 +140,21 @@ func lastTag(repo *git.Repository) (string, error) {
 		return "", fmt.Errorf("failed to get tags: %w", err)
 	}
 	var tags []string
+	// Map to track original format for each normalized tag
+	originalFormat := make(map[string]string)
 	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
+		tagName := t.Name().Short()
+		// Normalize for validation (semver requires "v" prefix)
+		normalizedTag := normalizeVersion(tagName)
 		// check that the tag matches the semver format
-		if !semver.IsValid(t.Name().Short()) {
+		if !semver.IsValid(normalizedTag) {
 			return nil
 		}
-		tags = append(tags, t.Name().Short())
+		tags = append(tags, normalizedTag)
+		// Store original format (prefer the one without "v" if we encounter duplicates)
+		if _, exists := originalFormat[normalizedTag]; !exists || !hasVPrefix(tagName) {
+			originalFormat[normalizedTag] = tagName
+		}
 		return nil
 	})
 	if err != nil {
@@ -152,10 +163,11 @@ func lastTag(repo *git.Repository) (string, error) {
 	if len(tags) == 0 {
 		return "", errors.New("no version tags found in the repository")
 	}
-	// sort the tags
+	// sort the normalized tags
 	semver.Sort(tags)
-	// return the last tag
-	return tags[len(tags)-1], nil
+	// return the highest tag in its original format
+	highestNormalized := tags[len(tags)-1]
+	return originalFormat[highestNormalized], nil
 }
 
 func tagExists(repo *git.Repository, tagName string) (bool, error) {
@@ -176,6 +188,27 @@ func tagExists(repo *git.Repository, tagName string) (bool, error) {
 	}
 
 	return exists, nil
+}
+
+// hasVPrefix checks if a version string starts with "v"
+func hasVPrefix(version string) bool {
+	return len(version) > 0 && version[0] == 'v'
+}
+
+// normalizeVersion ensures a version has "v" prefix for semver operations
+func normalizeVersion(version string) string {
+	if hasVPrefix(version) {
+		return version
+	}
+	return "v" + version
+}
+
+// stripVPrefix removes "v" prefix if present
+func stripVPrefix(version string) string {
+	if hasVPrefix(version) {
+		return version[1:]
+	}
+	return version
 }
 
 func getConfig(args []string) (config, bool, error) {
@@ -229,6 +262,9 @@ func getConfig(args []string) (config, bool, error) {
 }
 
 func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newVersion string) error {
+	// Track if any files were updated
+	filesUpdated := 0
+
 	// find all the files name ".version"
 	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -253,6 +289,8 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 		// print the action to the output.
 		_, _ = fmt.Fprintf(output, "Updating version in file %s to %s\n", path, newVersion)
 
+		filesUpdated++
+
 		if cfg.dryRun {
 			return nil // return early if we are in dry-run mode
 		}
@@ -272,8 +310,8 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 		return fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	// Only commit if not in dry-run mode
-	if !cfg.dryRun {
+	// Only commit if not in dry-run mode and files were actually updated
+	if !cfg.dryRun && filesUpdated > 0 {
 		// commit the changes
 		err = commit(repo, fmt.Sprintf("bump version to %s", newVersion))
 		if err != nil {
@@ -284,13 +322,19 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 }
 
 func incrementVersion(currentVersion string, cfg config) (string, error) {
-	parts := strings.Split(currentVersion, ".")
+	// Detect if the current version uses "v" prefix
+	useVPrefix := hasVPrefix(currentVersion)
+
+	// Strip "v" prefix for parsing
+	versionToParse := stripVPrefix(currentVersion)
+
+	parts := strings.Split(versionToParse, ".")
 	if len(parts) != 3 {
 		return "", fmt.Errorf("invalid version format: %s", currentVersion)
 	}
 
 	var major, minor, patch int
-	_, err := fmt.Sscanf(currentVersion, "v%d.%d.%d", &major, &minor, &patch)
+	_, err := fmt.Sscanf(versionToParse, "%d.%d.%d", &major, &minor, &patch)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse current version('%s'): %w", currentVersion, err)
 	}
@@ -307,7 +351,12 @@ func incrementVersion(currentVersion string, cfg config) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid action: %d", cfg.action)
 	}
-	return fmt.Sprintf("v%d.%d.%d", major, minor, patch), nil
+
+	// Return version in the same format as input
+	if useVPrefix {
+		return fmt.Sprintf("v%d.%d.%d", major, minor, patch), nil
+	}
+	return fmt.Sprintf("%d.%d.%d", major, minor, patch), nil
 }
 
 func tagVersion(repo *git.Repository, cfg config, version string) (string, error) {

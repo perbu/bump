@@ -539,7 +539,7 @@ func TestUpdateVersionFiles(t *testing.T) {
 			versionFiles:  map[string]string{},
 			newVersion:    "v1.0.0",
 			dryRun:        false,
-			expectCommit:  true, // commit happens even with no files
+			expectCommit:  false, // no commit when no files are updated
 			expectUpdated: map[string]string{},
 			wantErr:       false,
 		},
