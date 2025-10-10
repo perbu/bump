@@ -282,9 +282,9 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 			return fmt.Errorf("failed to read file: %w", err)
 		}
 		// content must either by empty or a valid semver, if not we return an error
-
-		if len(content) > 0 && !semver.IsValid(string(content)) {
-			return fmt.Errorf("invalid version in file %s: '%s'", path, content)
+		trimmedContent := strings.TrimSpace(string(content))
+		if len(trimmedContent) > 0 && !semver.IsValid(normalizeVersion(trimmedContent)) {
+			return fmt.Errorf("invalid version in file %s: '%s'", path, trimmedContent)
 		}
 		// print the action to the output.
 		_, _ = fmt.Fprintf(output, "Updating version in file %s to %s\n", path, newVersion)
