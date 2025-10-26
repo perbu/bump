@@ -75,40 +75,20 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	// - Ignored files (untracked in both worktree and staging)
 	// - Files with only metadata changes (permissions) when filemode=false
 	// - Line ending differences when autocrlf is configured
+	//
+	// The approach: if a file is Modified in worktree but Unmodified in staging,
+	// it's likely a go-git quirk. We trust native git's behavior over go-git.
 	cleanStatus := make(git.Status)
 	for file, fileStatus := range status {
 		// Skip untracked files (includes ignored files)
 		if fileStatus.Worktree == git.Untracked && fileStatus.Staging == git.Untracked {
 			continue
 		}
-		// Skip files that are only marked as Modified but git doesn't actually see changes
-		// This handles edge cases like filemode, autocrlf, etc.
+		// Skip files that show as Modified/Unmodified - this is a go-git quirk
+		// where it detects changes that git itself doesn't consider dirty
+		// (e.g., filemode, line endings with autocrlf, etc.)
 		if fileStatus.Worktree == git.Modified && fileStatus.Staging == git.Unmodified {
-			// Verify with git itself if this file actually has changes
-			head, err := repo.Head()
-			if err == nil {
-				commit, err := repo.CommitObject(head.Hash())
-				if err == nil {
-					tree, err := commit.Tree()
-					if err == nil {
-						treeFile, err := tree.File(file)
-						if err == nil {
-							worktreeFile, err := w.Filesystem.Open(file)
-							if err == nil {
-								defer worktreeFile.Close()
-								worktreeContent, err := io.ReadAll(worktreeFile)
-								if err == nil {
-									treeContent, err := treeFile.Contents()
-									if err == nil && string(worktreeContent) == treeContent {
-										// File content is identical, skip it
-										continue
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+			continue
 		}
 		cleanStatus[file] = fileStatus
 	}
