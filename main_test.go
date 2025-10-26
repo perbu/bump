@@ -164,6 +164,27 @@ func TestBumpNormalOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Make a change after the tag (simulating actual development work)
+	changeFile := filepath.Join(tempDir, "feature.txt")
+	err = os.WriteFile(changeFile, []byte("new feature"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add("feature.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add new feature", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// Execute: Normal bump operation (v1.0.0 -> v1.0.1)
 	var output bytes.Buffer
 	err = run(context.Background(), &output, []string{"-patch"}, nil)
@@ -647,6 +668,27 @@ func TestBumpWithMetadataOnlyChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = repo.CreateTag("v1.0.0", head.Hash(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make an actual change after the tag
+	changeFile := filepath.Join(tempDir, "feature.txt")
+	err = os.WriteFile(changeFile, []byte("new feature"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add("feature.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add new feature", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

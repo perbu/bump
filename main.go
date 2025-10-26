@@ -138,6 +138,15 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		return fmt.Errorf("failed to get last tag: %w", err)
 	}
 
+	// Check if there are changes since the last tag
+	hasChanges, err := hasChangesSinceTag(repo, currentVersion)
+	if err != nil {
+		return fmt.Errorf("failed to check for changes since last tag: %w", err)
+	}
+	if !hasChanges && !runConfig.forced {
+		return fmt.Errorf("no changes since last version tag '%s' (use -force to override)", currentVersion)
+	}
+
 	newVersion, err := incrementVersion(currentVersion, runConfig)
 	if err != nil {
 		return fmt.Errorf("incrementVersion: %w", err)
@@ -220,6 +229,55 @@ func tagExists(repo *git.Repository, tagName string) (bool, error) {
 	}
 
 	return exists, nil
+}
+
+// hasChangesSinceTag checks if there are any commits since the given tag
+func hasChangesSinceTag(repo *git.Repository, tagName string) (bool, error) {
+	// Get all tags and find the one we're looking for
+	tagRefs, err := repo.Tags()
+	if err != nil {
+		return false, fmt.Errorf("failed to get tags: %w", err)
+	}
+
+	var tagHash plumbing.Hash
+	found := false
+	err = tagRefs.ForEach(func(t *plumbing.Reference) error {
+		if t.Name().Short() == tagName {
+			tagHash = t.Hash()
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to iterate tags: %w", err)
+	}
+	if !found {
+		return false, fmt.Errorf("tag not found: %s", tagName)
+	}
+
+	// Try to get as commit object first (for lightweight tags)
+	commit, err := repo.CommitObject(tagHash)
+	if err != nil {
+		// If that fails, it might be an annotated tag
+		tagObj, err := repo.TagObject(tagHash)
+		if err != nil {
+			return false, fmt.Errorf("failed to get tag or commit object: %w", err)
+		}
+		// Get the commit the tag points to
+		commit, err = repo.CommitObject(tagObj.Target)
+		if err != nil {
+			return false, fmt.Errorf("failed to get commit from tag: %w", err)
+		}
+	}
+
+	// Get the current HEAD
+	head, err := repo.Head()
+	if err != nil {
+		return false, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+
+	// If HEAD is the same as the tag commit, there are no changes
+	return head.Hash() != commit.Hash, nil
 }
 
 // hasVPrefix checks if a version string starts with "v"
