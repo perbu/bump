@@ -69,11 +69,24 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 	if err != nil {
 		return fmt.Errorf("worktree.Status: %w", err)
 	}
-	if !status.IsClean() && !runConfig.forced {
+
+	// Filter out ignored files from status - they shouldn't block bumping
+	// go-git's IsClean() returns false even for ignored files, which differs from git's behavior
+	cleanStatus := make(git.Status)
+	for file, fileStatus := range status {
+		// git.StatusCode has specific bits for different states
+		// Worktree: ?? (untracked) = 0x3F includes ignored files
+		// We want to skip ignored files (when both worktree and staging are '?')
+		if fileStatus.Worktree != git.Untracked || fileStatus.Staging != git.Untracked {
+			cleanStatus[file] = fileStatus
+		}
+	}
+
+	if !cleanStatus.IsClean() && !runConfig.forced {
 		// Provide detailed information about what's dirty
 		var reasons []string
-		for file, fileStatus := range status {
-			reasons = append(reasons, fmt.Sprintf("  %s: %s", file, fileStatus.Staging))
+		for file, fileStatus := range cleanStatus {
+			reasons = append(reasons, fmt.Sprintf("  %s: worktree=%v staging=%v", file, fileStatus.Worktree, fileStatus.Staging))
 		}
 		if len(reasons) > 0 {
 			return fmt.Errorf("repository is not clean (use -force to override):\n%s", strings.Join(reasons, "\n"))

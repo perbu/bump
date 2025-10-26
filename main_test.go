@@ -457,6 +457,128 @@ func TestIncrementVersion(t *testing.T) {
 	}
 }
 
+func TestBumpWithIgnoredFiles(t *testing.T) {
+	// Setup: Create temporary git repository
+	tempDir, repo := setupTestRepo(t)
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(originalDir)
+
+	// Change to test repository directory
+	err = os.Chdir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .version file with initial version
+	versionFile := filepath.Join(tempDir, ".version")
+	err = os.WriteFile(versionFile, []byte("v1.0.0"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add and commit the .version file
+	w, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add(".version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add initial version file", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the v1.0.0 tag
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.CreateTag("v1.0.0", head.Hash(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .gitignore to ignore .claude directory
+	gitignoreFile := filepath.Join(tempDir, ".gitignore")
+	err = os.WriteFile(gitignoreFile, []byte(".claude/\n.idea/\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add .gitignore", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create ignored directory with a file (simulating .claude/settings.local.json)
+	claudeDir := filepath.Join(tempDir, ".claude")
+	err = os.MkdirAll(claudeDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignoredFile := filepath.Join(claudeDir, "settings.local.json")
+	err = os.WriteFile(ignoredFile, []byte(`{"foo": "bar"}`), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify that git status shows clean (excluding ignored files)
+	status, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Git status: %+v", status)
+
+	// Execute: Try to bump with ignored files present
+	// This should succeed because ignored files shouldn't block bumping
+	var output bytes.Buffer
+	err = run(context.Background(), &output, []string{"-patch"}, nil)
+
+	// Should succeed
+	if err != nil {
+		t.Errorf("Expected bump to succeed with ignored files present, but got error: %v", err)
+		t.Logf("Output: %s", output.String())
+	}
+
+	// Verify .version file was updated correctly
+	content, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v1.0.1" {
+		t.Errorf("Expected .version file to be 'v1.0.1', but got '%s'", string(content))
+	}
+
+	// Verify the tag was created
+	exists, err := tagExists(repo, "v1.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Error("Expected tag v1.0.1 to be created, but it doesn't exist")
+	}
+}
+
 func TestUpdateVersionFiles(t *testing.T) {
 	tests := []struct {
 		name          string
