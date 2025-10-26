@@ -70,6 +70,14 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		return fmt.Errorf("worktree.Status: %w", err)
 	}
 	if !status.IsClean() && !runConfig.forced {
+		// Provide detailed information about what's dirty
+		var reasons []string
+		for file, fileStatus := range status {
+			reasons = append(reasons, fmt.Sprintf("  %s: %s", file, fileStatus.Staging))
+		}
+		if len(reasons) > 0 {
+			return fmt.Errorf("repository is not clean (use -force to override):\n%s", strings.Join(reasons, "\n"))
+		}
 		return fmt.Errorf("repository is not clean (use -force to override)")
 	}
 
