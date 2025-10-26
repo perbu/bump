@@ -70,16 +70,47 @@ func run(ctx context.Context, output io.Writer, argv []string, env []string) err
 		return fmt.Errorf("worktree.Status: %w", err)
 	}
 
-	// Filter out ignored files from status - they shouldn't block bumping
-	// go-git's IsClean() returns false even for ignored files, which differs from git's behavior
+	// Filter out files that shouldn't block bumping
+	// go-git's Status() can report files that native git doesn't consider dirty:
+	// - Ignored files (untracked in both worktree and staging)
+	// - Files with only metadata changes (permissions) when filemode=false
+	// - Line ending differences when autocrlf is configured
 	cleanStatus := make(git.Status)
 	for file, fileStatus := range status {
-		// git.StatusCode has specific bits for different states
-		// Worktree: ?? (untracked) = 0x3F includes ignored files
-		// We want to skip ignored files (when both worktree and staging are '?')
-		if fileStatus.Worktree != git.Untracked || fileStatus.Staging != git.Untracked {
-			cleanStatus[file] = fileStatus
+		// Skip untracked files (includes ignored files)
+		if fileStatus.Worktree == git.Untracked && fileStatus.Staging == git.Untracked {
+			continue
 		}
+		// Skip files that are only marked as Modified but git doesn't actually see changes
+		// This handles edge cases like filemode, autocrlf, etc.
+		if fileStatus.Worktree == git.Modified && fileStatus.Staging == git.Unmodified {
+			// Verify with git itself if this file actually has changes
+			head, err := repo.Head()
+			if err == nil {
+				commit, err := repo.CommitObject(head.Hash())
+				if err == nil {
+					tree, err := commit.Tree()
+					if err == nil {
+						treeFile, err := tree.File(file)
+						if err == nil {
+							worktreeFile, err := w.Filesystem.Open(file)
+							if err == nil {
+								defer worktreeFile.Close()
+								worktreeContent, err := io.ReadAll(worktreeFile)
+								if err == nil {
+									treeContent, err := treeFile.Contents()
+									if err == nil && string(worktreeContent) == treeContent {
+										// File content is identical, skip it
+										continue
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		cleanStatus[file] = fileStatus
 	}
 
 	if !cleanStatus.IsClean() && !runConfig.forced {

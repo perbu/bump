@@ -579,6 +579,123 @@ func TestBumpWithIgnoredFiles(t *testing.T) {
 	}
 }
 
+func TestBumpWithMetadataOnlyChanges(t *testing.T) {
+	// This test simulates the issue seen in rabbitfs where go-git reports
+	// a file as modified (worktree=77, staging=32) but git status shows clean.
+	// This can happen with filemode changes, line endings, or other metadata differences.
+
+	// Setup: Create temporary git repository
+	tempDir, repo := setupTestRepo(t)
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(originalDir)
+
+	// Change to test repository directory
+	err = os.Chdir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .version file with initial version
+	versionFile := filepath.Join(tempDir, ".version")
+	err = os.WriteFile(versionFile, []byte("v1.0.0"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a vendor file (simulating the rabbitfs scenario)
+	vendorDir := filepath.Join(tempDir, "vendor", "github.com", "example", "pkg")
+	err = os.MkdirAll(vendorDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vendorFile := filepath.Join(vendorDir, "file.go")
+	err = os.WriteFile(vendorFile, []byte("package pkg\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add and commit both files
+	w, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add(".version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add(filepath.Join("vendor", "github.com", "example", "pkg", "file.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add initial files", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the v1.0.0 tag
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.CreateTag("v1.0.0", head.Hash(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now rewrite the vendor file with identical content but potentially different metadata
+	// This simulates the scenario where go-git thinks the file is modified
+	// but git status shows clean (could be due to filemode, line endings, etc.)
+	err = os.WriteFile(vendorFile, []byte("package pkg\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Check status - go-git might report this as modified
+	status, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Git status after rewrite: %+v", status)
+
+	// Execute: Try to bump - this should succeed even if go-git reports the file as modified
+	// because the content is identical to what's in git
+	var output bytes.Buffer
+	err = run(context.Background(), &output, []string{"-patch"}, nil)
+
+	// Should succeed
+	if err != nil {
+		t.Errorf("Expected bump to succeed with metadata-only changes, but got error: %v", err)
+		t.Logf("Output: %s", output.String())
+	}
+
+	// Verify .version file was updated correctly
+	content, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v1.0.1" {
+		t.Errorf("Expected .version file to be 'v1.0.1', but got '%s'", string(content))
+	}
+
+	// Verify the tag was created
+	exists, err := tagExists(repo, "v1.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Error("Expected tag v1.0.1 to be created, but it doesn't exist")
+	}
+}
+
 func TestUpdateVersionFiles(t *testing.T) {
 	tests := []struct {
 		name          string
