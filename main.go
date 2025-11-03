@@ -6,15 +6,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"golang.org/x/mod/semver"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"golang.org/x/mod/semver"
 )
 
 //go:embed .version
@@ -362,6 +363,9 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 		}
 		if d.IsDir() {
 			return nil
+		}
+		if d.Name() == "vendor" || d.Name() == "testdata" {
+			return filepath.SkipDir
 		}
 		if d.Name() != ".version" {
 			return nil
