@@ -738,6 +738,166 @@ func TestBumpWithMetadataOnlyChanges(t *testing.T) {
 	}
 }
 
+func TestBumpWithUntrackedFiles(t *testing.T) {
+	// This test exposes the bug where untracked files don't prevent bumping
+	// even though they should make the repository dirty.
+
+	// Setup: Create temporary git repository
+	tempDir, repo := setupTestRepo(t)
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(originalDir)
+
+	// Change to test repository directory
+	err = os.Chdir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .version file with initial version
+	versionFile := filepath.Join(tempDir, ".version")
+	err = os.WriteFile(versionFile, []byte("v1.0.0"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add and commit the .version file
+	w, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add(".version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add initial version file", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the v1.0.0 tag
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.CreateTag("v1.0.0", head.Hash(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a real change first (so hasChangesSinceTag doesn't block us)
+	changeFile := filepath.Join(tempDir, "feature.txt")
+	err = os.WriteFile(changeFile, []byte("new feature"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add("feature.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add new feature", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now create UNTRACKED files (this should make the repo dirty!)
+	untrackedFile1 := filepath.Join(tempDir, "untracked1.txt")
+	err = os.WriteFile(untrackedFile1, []byte("this file is not tracked"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	untrackedFile2 := filepath.Join(tempDir, "untracked2.go")
+	err = os.WriteFile(untrackedFile2, []byte("package main\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the files are indeed untracked
+	status, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Git status with untracked files: %+v", status)
+
+	// Count commits before
+	commitCountBefore := countCommits(t, repo)
+
+	// Test 1: Try to bump WITHOUT -force - this should FAIL
+	var output1 bytes.Buffer
+	err = run(context.Background(), &output1, []string{"-patch"}, nil)
+
+	t.Logf("Output without -force: %s", output1.String())
+	t.Logf("Error without -force: %v", err)
+
+	// EXPECTED: bump should fail because there are untracked files
+	if err == nil {
+		t.Error("BUG DETECTED: bump succeeded with untracked files present (should fail without -force)")
+	} else if !strings.Contains(err.Error(), "not clean") {
+		t.Errorf("BUG DETECTED: Expected 'not clean' error, got: %v", err)
+	}
+
+	// Verify no commit was made
+	commitCountAfter := countCommits(t, repo)
+	if commitCountAfter != commitCountBefore {
+		t.Errorf("BUG DETECTED: Commit was created even though repo has untracked files. Count changed from %d to %d",
+			commitCountBefore, commitCountAfter)
+	}
+
+	// Verify .version file wasn't updated
+	content, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v1.0.0" {
+		t.Errorf("BUG DETECTED: .version file was updated even with untracked files. Expected 'v1.0.0', got '%s'", string(content))
+	}
+
+	// Test 2: Try to bump WITH -force - this SHOULD succeed
+	var output2 bytes.Buffer
+	err = run(context.Background(), &output2, []string{"-patch", "-force"}, nil)
+
+	t.Logf("Output with -force: %s", output2.String())
+	t.Logf("Error with -force: %v", err)
+
+	// EXPECTED: bump should succeed with -force flag
+	if err != nil {
+		t.Errorf("Expected bump to succeed with -force flag, but got error: %v", err)
+	}
+
+	// Verify .version file WAS updated this time
+	content, err = os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v1.0.1" {
+		t.Errorf("Expected .version file to be 'v1.0.1' with -force, but got '%s'", string(content))
+	}
+
+	// Verify the tag was created
+	exists, err := tagExists(repo, "v1.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Error("Expected tag v1.0.1 to be created with -force, but it doesn't exist")
+	}
+}
+
 func TestUpdateVersionFiles(t *testing.T) {
 	tests := []struct {
 		name          string
