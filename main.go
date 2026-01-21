@@ -362,10 +362,11 @@ func updateVersionFiles(repo *git.Repository, cfg config, output io.Writer, newV
 			return fmt.Errorf("failed to walk directory: %w", err)
 		}
 		if d.IsDir() {
+			switch d.Name() {
+			case "vendor", "testdata", "node_modules", ".git":
+				return filepath.SkipDir
+			}
 			return nil
-		}
-		if d.Name() == "vendor" || d.Name() == "testdata" {
-			return filepath.SkipDir
 		}
 		if d.Name() != ".version" {
 			return nil
