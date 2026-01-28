@@ -17,11 +17,29 @@ tags, it will fail.
 It will then increment ("bump") the version number according to the command line arguments. If no arguments are given
 it will default to bumping the patch version.
 
-It will then look for files name `.version`. If any such files are found in the repository their content will be
+It will then look for files named `.version`. If any such files are found in the repository their content will be
 replaced with the new version number.
 
 These files will then be added to git and committed with a message that includes the new version number. bump will try
 to access the ssh-agent to sign the commit.
 
 Finally, it will create a new tag in git with the bumped version number.
+
+### .bumpignore
+
+You can create a `.bumpignore` file in your repository root to exclude directories from the `.version` file scan:
+
+```
+# Anchored patterns (match at repo root only)
+/vendor
+/node_modules
+
+# Unanchored patterns (match at any depth)
+testdata
+.cache
+```
+
+- Lines starting with `/` match directories at the repository root only
+- Other patterns match directory names at any depth
+- Lines starting with `#` are comments
 
