@@ -738,6 +738,370 @@ func TestBumpWithMetadataOnlyChanges(t *testing.T) {
 	}
 }
 
+func TestLoadIgnoreRules(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []ignoreRule
+		wantErr bool
+	}{
+		{
+			name:    "empty file",
+			content: "",
+			want:    nil,
+			wantErr: false,
+		},
+		{
+			name:    "comments and blank lines",
+			content: "# This is a comment\n\n# Another comment\n",
+			want:    nil,
+			wantErr: false,
+		},
+		{
+			name:    "anchored pattern",
+			content: "/vendor\n",
+			want:    []ignoreRule{{pattern: "vendor", anchored: true}},
+			wantErr: false,
+		},
+		{
+			name:    "unanchored pattern",
+			content: "testdata\n",
+			want:    []ignoreRule{{pattern: "testdata", anchored: false}},
+			wantErr: false,
+		},
+		{
+			name:    "mixed patterns",
+			content: "# Anchored patterns\n/vendor\n/node_modules\n\n# Unanchored patterns\ntestdata\n.cache\n",
+			want: []ignoreRule{
+				{pattern: "vendor", anchored: true},
+				{pattern: "node_modules", anchored: true},
+				{pattern: "testdata", anchored: false},
+				{pattern: ".cache", anchored: false},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "whitespace trimming",
+			content: "  /vendor  \n  testdata  \n",
+			want: []ignoreRule{
+				{pattern: "vendor", anchored: true},
+				{pattern: "testdata", anchored: false},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp file
+			tempDir := t.TempDir()
+			ignoreFile := filepath.Join(tempDir, ".bumpignore")
+			err := os.WriteFile(ignoreFile, []byte(tt.content), 0644)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := loadIgnoreRules(ignoreFile)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("loadIgnoreRules() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Errorf("loadIgnoreRules() got %d rules, want %d", len(got), len(tt.want))
+				return
+			}
+
+			for i, rule := range got {
+				if rule.pattern != tt.want[i].pattern || rule.anchored != tt.want[i].anchored {
+					t.Errorf("loadIgnoreRules() rule[%d] = %+v, want %+v", i, rule, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestLoadIgnoreRulesNoFile(t *testing.T) {
+	// Test that missing file returns nil, nil
+	rules, err := loadIgnoreRules("/nonexistent/.bumpignore")
+	if err != nil {
+		t.Errorf("loadIgnoreRules() error = %v, want nil", err)
+	}
+	if rules != nil {
+		t.Errorf("loadIgnoreRules() got %v, want nil", rules)
+	}
+}
+
+func TestShouldIgnore(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		dirName string
+		rules   []ignoreRule
+		want    bool
+	}{
+		{
+			name:    "no rules",
+			path:    "vendor",
+			dirName: "vendor",
+			rules:   nil,
+			want:    false,
+		},
+		{
+			name:    "anchored match at root",
+			path:    "vendor",
+			dirName: "vendor",
+			rules:   []ignoreRule{{pattern: "vendor", anchored: true}},
+			want:    true,
+		},
+		{
+			name:    "anchored no match nested",
+			path:    "foo/vendor",
+			dirName: "vendor",
+			rules:   []ignoreRule{{pattern: "vendor", anchored: true}},
+			want:    false,
+		},
+		{
+			name:    "unanchored match at root",
+			path:    "testdata",
+			dirName: "testdata",
+			rules:   []ignoreRule{{pattern: "testdata", anchored: false}},
+			want:    true,
+		},
+		{
+			name:    "unanchored match nested",
+			path:    "foo/bar/testdata",
+			dirName: "testdata",
+			rules:   []ignoreRule{{pattern: "testdata", anchored: false}},
+			want:    true,
+		},
+		{
+			name:    "multiple rules first matches",
+			path:    "vendor",
+			dirName: "vendor",
+			rules: []ignoreRule{
+				{pattern: "vendor", anchored: true},
+				{pattern: "testdata", anchored: false},
+			},
+			want: true,
+		},
+		{
+			name:    "multiple rules second matches",
+			path:    "foo/testdata",
+			dirName: "testdata",
+			rules: []ignoreRule{
+				{pattern: "vendor", anchored: true},
+				{pattern: "testdata", anchored: false},
+			},
+			want: true,
+		},
+		{
+			name:    "no match",
+			path:    "src",
+			dirName: "src",
+			rules: []ignoreRule{
+				{pattern: "vendor", anchored: true},
+				{pattern: "testdata", anchored: false},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldIgnore(tt.path, tt.dirName, tt.rules)
+			if got != tt.want {
+				t.Errorf("shouldIgnore() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBumpWithBumpignore(t *testing.T) {
+	// Setup: Create temporary git repository
+	tempDir, repo := setupTestRepo(t)
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(originalDir)
+
+	// Change to test repository directory
+	err = os.Chdir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .version file at root
+	versionFile := filepath.Join(tempDir, ".version")
+	err = os.WriteFile(versionFile, []byte("v1.0.0"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .version file in a directory that should be ignored
+	ignoredDir := filepath.Join(tempDir, "vendor", "pkg")
+	err = os.MkdirAll(ignoredDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignoredVersionFile := filepath.Join(ignoredDir, ".version")
+	err = os.WriteFile(ignoredVersionFile, []byte("v0.0.0"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .version file in a nested directory that should be ignored (unanchored)
+	nestedIgnoredDir := filepath.Join(tempDir, "foo", "testdata")
+	err = os.MkdirAll(nestedIgnoredDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nestedIgnoredVersionFile := filepath.Join(nestedIgnoredDir, ".version")
+	err = os.WriteFile(nestedIgnoredVersionFile, []byte("v0.0.0"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .version file in a directory that should NOT be ignored
+	includedDir := filepath.Join(tempDir, "src")
+	err = os.MkdirAll(includedDir, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	includedVersionFile := filepath.Join(includedDir, ".version")
+	err = os.WriteFile(includedVersionFile, []byte("v1.0.0"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .bumpignore file
+	bumpignore := filepath.Join(tempDir, ".bumpignore")
+	err = os.WriteFile(bumpignore, []byte("# Anchored patterns\n/vendor\n\n# Unanchored patterns\ntestdata\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add and commit all files
+	w, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add(".version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add("src/.version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add(".bumpignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add version files and .bumpignore", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the v1.0.0 tag
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.CreateTag("v1.0.0", head.Hash(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a change after the tag
+	changeFile := filepath.Join(tempDir, "feature.txt")
+	err = os.WriteFile(changeFile, []byte("new feature"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Add("feature.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Commit("Add new feature", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test User",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Execute: bump with .bumpignore
+	var output bytes.Buffer
+	err = run(context.Background(), &output, []string{"-patch"}, nil)
+
+	// Should succeed
+	if err != nil {
+		t.Errorf("Expected bump to succeed, but got error: %v", err)
+		t.Logf("Output: %s", output.String())
+	}
+
+	// Verify root .version was updated
+	content, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v1.0.1" {
+		t.Errorf("Expected root .version to be 'v1.0.1', but got '%s'", string(content))
+	}
+
+	// Verify included .version was updated
+	content, err = os.ReadFile(includedVersionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v1.0.1" {
+		t.Errorf("Expected src/.version to be 'v1.0.1', but got '%s'", string(content))
+	}
+
+	// Verify ignored .version files were NOT updated
+	content, err = os.ReadFile(ignoredVersionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v0.0.0" {
+		t.Errorf("Expected vendor/pkg/.version to remain 'v0.0.0' (ignored), but got '%s'", string(content))
+	}
+
+	content, err = os.ReadFile(nestedIgnoredVersionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v0.0.0" {
+		t.Errorf("Expected foo/testdata/.version to remain 'v0.0.0' (ignored), but got '%s'", string(content))
+	}
+
+	// Verify output mentions updated files but not ignored ones
+	outputStr := output.String()
+	if !strings.Contains(outputStr, ".version") {
+		t.Errorf("Expected output to mention root .version update")
+	}
+	if !strings.Contains(outputStr, "src/.version") {
+		t.Errorf("Expected output to mention src/.version update")
+	}
+	if strings.Contains(outputStr, "vendor") {
+		t.Errorf("Expected output to NOT mention vendor (should be ignored)")
+	}
+	if strings.Contains(outputStr, "testdata") {
+		t.Errorf("Expected output to NOT mention testdata (should be ignored)")
+	}
+}
+
 func TestUpdateVersionFiles(t *testing.T) {
 	tests := []struct {
 		name          string
