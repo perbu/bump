@@ -824,6 +824,47 @@ func TestUpdateVersionFiles(t *testing.T) {
 			expectUpdated: map[string]string{},
 			wantErr:       false,
 		},
+		{
+			name: "preserves absence of v prefix",
+			versionFiles: map[string]string{
+				".version": "1.0.0",
+			},
+			newVersion:   "v1.0.1",
+			dryRun:       false,
+			expectCommit: true,
+			expectUpdated: map[string]string{
+				".version": "1.0.1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "preserves v prefix when new version lacks it",
+			versionFiles: map[string]string{
+				".version": "v1.0.0",
+			},
+			newVersion:   "1.0.1",
+			dryRun:       false,
+			expectCommit: true,
+			expectUpdated: map[string]string{
+				".version": "v1.0.1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "mixed prefix conventions across files",
+			versionFiles: map[string]string{
+				".version":     "v1.0.0",
+				"sub/.version": "1.0.0",
+			},
+			newVersion:   "v2.0.0",
+			dryRun:       false,
+			expectCommit: true,
+			expectUpdated: map[string]string{
+				".version":     "v2.0.0",
+				"sub/.version": "2.0.0",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -900,8 +941,8 @@ func TestUpdateVersionFiles(t *testing.T) {
 			// Check output contains update messages
 			outputStr := output.String()
 			if !tt.dryRun && !tt.wantErr {
-				for path := range tt.versionFiles {
-					expectedMsg := fmt.Sprintf("Updating version in file %s to %s", path, tt.newVersion)
+				for path, expectedContent := range tt.expectUpdated {
+					expectedMsg := fmt.Sprintf("Updating version in file %s to %s", path, expectedContent)
 					if !strings.Contains(outputStr, expectedMsg) {
 						t.Errorf("Expected output to contain %q, but got: %s", expectedMsg, outputStr)
 					}
