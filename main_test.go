@@ -1229,6 +1229,19 @@ func TestUpdateVersionFiles(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "empty file adopts newVersion as-is",
+			versionFiles: map[string]string{
+				".version": "",
+			},
+			newVersion:   "v1.0.1",
+			dryRun:       false,
+			expectCommit: true,
+			expectUpdated: map[string]string{
+				".version": "v1.0.1",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
