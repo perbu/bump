@@ -3,6 +3,7 @@ module github.com/perbu/bump
 go 1.24.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/go-git/go-git/v5 v5.16.2
 	golang.org/x/mod v0.28.0
 )

@@ -1,0 +1,11 @@
+[[file]]
+path = "Cargo.toml"
+format = "cargo"
+
+[[file]]
+path = "package.json"
+format = "npm"
+
+[[file]]
+path = "charts/foo/Chart.yaml"
+format = "chart"

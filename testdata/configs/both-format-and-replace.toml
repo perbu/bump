@@ -1,0 +1,6 @@
+[[file]]
+path = "ambiguous.txt"
+format = "cargo"
+replace = [
+  { match = '^version: .*$', template = 'version: {version}' },
+]

@@ -1,0 +1,5 @@
+[[file]]
+path = "boring.txt"
+replace = [
+  { match = '^version: .*$', template = 'version: {version}' },
+]

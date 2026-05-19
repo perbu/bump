@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myorg-app
+  labels:
+    app: myorg-app
+version: 1.2.3
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: myorg/app:v1.2.3

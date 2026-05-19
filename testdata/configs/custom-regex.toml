@@ -1,0 +1,6 @@
+[[file]]
+path = "release.yaml"
+replace = [
+  { match = '^version: .*$', template = 'version: {version}' },
+  { match = '^(\s*)image: myorg/app:.*$', template = '${1}image: myorg/app:{tag}' },
+]
